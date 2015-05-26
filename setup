@@ -1,0 +1,14 @@
+#!/bin/sh
+
+CURL=`which curl`
+
+# get discovery URL from the fine etcd folks
+echo "Retrieving discovery URL from discovery.etcd.io.."
+TOKEN=`$CURL -Ls https://discovery.etcd.io/new?size=1`
+
+# copy cloud-config template and change accordingly
+echo "Discovery URL: [$TOKEN]"
+echo "Preparing cloud-config.."
+rm -rf temp && mkdir temp
+sed "s#__DISC_TOKEN__#$TOKEN#g" rethinkdb.yaml.tmpl > temp/rethinkdb.yaml
+echo "Done. Please use temp/rethinkdb.yaml cloud-config for provisioning your RethinkDB cluster nodes."
