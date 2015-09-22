@@ -13,79 +13,41 @@ coreos:
       command: start
     - name: fleet.service
       command: start
-    - name: rethinkdb-create-fleet-units.service
+    - name: rethinkdb-discovery.service
       command: start
       content: |
         [Unit]
+        Requires=etcd2.service fleet.service docker.service
         After=etcd2.service fleet.service docker.service
-        ConditionFileIsExecutable=/srv/rethinkdb-create-fleet-units.sh
-        ConditionFileNotEmpty=/srv/rethinkdb@.service
 
         [Service]
-        ExecStart=/srv/rethinkdb-create-fleet-units.sh
-        RemainAfterExit=no
-        Type=oneshot
-write_files:
-  - path: /srv/rethinkdb-create-fleet-units.sh
-    permissions: '0755'
-    owner: root
-    content: |
-      #!/bin/bash
-      source /etc/environment
-      set -ex
+        EnvironmentFile=/etc/environment
+        ExecStart=/bin/sh -c "while true; do etcdctl set /announce/services/rethinkdb-$private_ipv4 ${COREOS_PRIVATE_IPV4} --ttl 60; sleep 45; done"
+        ExecStop=/usr/bin/etcdctl rm /announce/services/rethinkdb-${COREOS_PRIVATE_IPV4}
+    - name: rethinkdb.service
+      command: start
+      content: |
+        [Unit]
+        Requires=rethinkdb-discovery.service
+        BindsTo=rethinkdb-discovery.service
 
-      mkdir -p /etc/ecs
-      cp /srv/rethinkdb-discovery@.service /srv/rethinkdb-discovery@$(hostname).service
-      cp /srv/rethinkdb@.service /srv/rethinkdb@$(hostname).service
-      sed -i -e "s/%i/$(hostname)/" /srv/rethinkdb@$(hostname).service /srv/rethinkdb-discovery@$(hostname).service
-      ( echo -n MachineID=; cat /etc/machine-id ) >> /srv/rethinkdb-discovery@$(hostname).service
-      ( echo -n MachineID=; cat /etc/machine-id ) >> /srv/rethinkdb@$(hostname).service
-      # give time for fleet to run properly
-      sleep 15
-      /usr/bin/fleetctl start /srv/rethinkdb-discovery@$(hostname).service
-      /usr/bin/fleetctl start /srv/rethinkdb@$(hostname).service
-  - path: /srv/rethinkdb-discovery@.service
-    permissions: 0644
-    owner: root
-    content: |
-      [Unit]
-      Description=Announce rethinkdb-discovery@%i
-
-      [Service]
-      EnvironmentFile=/etc/environment
-      ExecStart=/bin/sh -c "while true; do etcdctl set /announce/services/rethinkdb%i ${COREOS_PRIVATE_IPV4} --ttl 60; sleep 45; done"
-      ExecStop=/usr/bin/etcdctl rm /announce/services/rethinkdb%i
-
-      [X-Fleet]
-  - path: /srv/rethinkdb@.service
-    permissions: 0644
-    owner: root
-    content: |
-      [Unit]
-      Description=Run the rethinkdb@%i database service
-      After=docker.service
-      BindsTo=rethinkdb-discovery@%i.service
-
-      [Service]
-      EnvironmentFile=/etc/environment
-      TimeoutStartSec=0
-      ExecStartPre=-/usr/bin/docker kill rethinkdb
-      ExecStartPre=-/usr/bin/docker rm rethinkdb
-      ExecStartPre=-/usr/bin/mkdir -p /data/rethinkdb
-      ExecStartPre=/usr/bin/docker pull rethinkdb:2
-      ExecStart=/bin/sh -c '/usr/bin/docker run --name rethinkdb     \
-          -p ${COREOS_PRIVATE_IPV4}:18080:18080                      \
-          -p ${COREOS_PRIVATE_IPV4}:28015:28015                      \
-          -p ${COREOS_PRIVATE_IPV4}:29015:29015                      \
-          -v /data/rethinkdb/:/data/                                 \
-          rethinkdb:2 rethinkdb --bind all                             \
-          --http-port 18080                                          \
-          --canonical-address ${COREOS_PRIVATE_IPV4}                 \
-          $(/usr/bin/etcdctl ls /announce/services |                 \
-              xargs -I {} /usr/bin/etcdctl get {} |                  \
-              sed s/^/"--join "/ | sed s/$/":29015"/ |               \
-              tr "\n" " ")'
-
-      ExecStop=/usr/bin/docker stop rethinkdb
-
-      [X-Fleet]
+        [Service]
+        EnvironmentFile=/etc/environment
+        TimeoutStartSec=0
+        ExecStartPre=-/usr/bin/docker kill rethinkdb
+        ExecStartPre=-/usr/bin/docker rm rethinkdb
+        ExecStartPre=-/usr/bin/mkdir -p /data/rethinkdb
+        ExecStartPre=/usr/bin/docker pull rethinkdb:2.1
+        ExecStart=/bin/sh -c '/usr/bin/docker run --name rethinkdb     \
+            -p ${COREOS_PRIVATE_IPV4}:18080:18080                      \
+            -p ${COREOS_PRIVATE_IPV4}:28015:28015                      \
+            -p ${COREOS_PRIVATE_IPV4}:29015:29015                      \
+            -v /data/rethinkdb/:/data/                                 \
+            rethinkdb:2.1 rethinkdb --bind all                             \
+            --http-port 18080                                          \
+            --canonical-address ${COREOS_PRIVATE_IPV4}                 \
+            $(/usr/bin/etcdctl ls /announce/services |                 \
+                xargs -I {} /usr/bin/etcdctl get {} |                  \
+                sed s/^/"--join "/ | sed s/$/":29015"/ |               \
+                tr "\n" " ")'
+        ExecStop=/usr/bin/docker stop rethinkdb
